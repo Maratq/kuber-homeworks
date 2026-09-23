@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-logs-reader
+  labels:
+    app: node-logs-reader
+spec:
+  selector:
+    matchLabels:
+      app: node-logs-reader
+  template:
+    metadata:
+      labels:
+        app: node-logs-reader
+    spec:
+      containers:
+      - name: multitool
+        image: wbitt/network-multitool
+        command: ["/bin/sh", "-c"]
+        args:
+          - while true; do tail -n 20 /host/var/log/syslog; sleep 30; done
+        volumeMounts:
+        - name: host-logs
+          mountPath: /host/var/log
+          readOnly: true
+      volumes:
+      - name: host-logs
+        hostPath:
+          path: /var/log
+          type: Directory
