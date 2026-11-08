@@ -1,74 +1,153 @@
 # Домашнее задание 3.5 — Troubleshooting
 
-> Черновик: исправление подготовлено по исходному манифесту. Прогон в учебном Kubernetes и скриншоты ещё не выполнены. Работа пока не готова к сдаче.
+> Оформлено по предоставленным командам и выводу. Повторный запуск в кластере при оформлении не выполнялся.
 
-[Задание](https://github.com/netology-code/kuber-homeworks/blob/main/3.5/3.5.md) · [Исходный манифест](https://github.com/netology-code/kuber-homeworks/blob/main/3.5/files/task.yaml)
+### Цель задания
 
-## Причина
+Устранить неисправности при деплое приложения.
 
-Deployment `web-consumer` работает в namespace `web`, а Service `auth-db` и одноимённый Deployment — в `data`. Команда контейнера `while true; do curl auth-db; sleep 5; done` обращается к короткому DNS-имени. Оно ищется в namespace вызывающего pod, поэтому сервис из `data` таким именем не находится.
+### Чеклист готовности к домашнему заданию
 
-В исходном манифесте selector сервиса `app: auth-db` совпадает с меткой pod; `port` и `targetPort` равны 80. Исправление: обращаться к `auth-db.data`. Namespace в имени позволяет найти сервис через DNS Kubernetes. При стандартном домене полное имя — `auth-db.data.svc.cluster.local`.
+1. Кластер k8s
 
-Источник: [документация DNS Kubernetes](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/). Вывод по манифесту требует подтверждения в кластере.
+### Задание 1. При деплое приложение web-consumer не может подключиться к auth-db. Необходимо исправить
 
-## Воспроизведение и диагностика
+1. Установить приложение по команде:
 
-Все команды выполняются только после выбора учебного context:
+```shell
+kubectl apply -f https://raw.githubusercontent.com/netology-code/kuber-homeworks/main/3.5/files/task.yaml
+
+```
+2. Выявить проблему и описать
+3. Исправить проблему, описать, что сделано
+4. Продемонстрировать, что проблема решена
+
+## Решение
+
+### 1. Анализ исходного манифеста
+
+Скачаем исходный манифест и посмотрим, какие ресурсы он описывает:
 
 ```bash
-export LAB_CONTEXT='<учебный-context>'
-kubectl --context="$LAB_CONTEXT" get nodes -o wide
-kubectl --context="$LAB_CONTEXT" version
-kubectl --context="$LAB_CONTEXT" apply -f files/namespaces.yaml
-kubectl --context="$LAB_CONTEXT" apply -f https://raw.githubusercontent.com/netology-code/kuber-homeworks/main/3.5/files/task.yaml
-kubectl --context="$LAB_CONTEXT" -n data rollout status deployment/auth-db --timeout=180s
-kubectl --context="$LAB_CONTEXT" -n web rollout status deployment/web-consumer --timeout=180s
-kubectl --context="$LAB_CONTEXT" -n web get pods -o wide
-kubectl --context="$LAB_CONTEXT" -n data get pods,svc -o wide
-kubectl --context="$LAB_CONTEXT" -n data get endpointslices -l kubernetes.io/service-name=auth-db
-kubectl --context="$LAB_CONTEXT" -n web logs -l app=web-consumer --prefix --tail=10
-kubectl --context="$LAB_CONTEXT" -n web exec deployment/web-consumer -- cat /etc/resolv.conf
-kubectl --context="$LAB_CONTEXT" -n web exec deployment/web-consumer -- nslookup auth-db
-kubectl --context="$LAB_CONTEXT" -n web exec deployment/web-consumer -- nslookup auth-db.data
+$ wget https://github.com/netology-code/kuber-homeworks/raw/main/3.5/files/task.yaml
+--2023-04-07 00:38:47--  https://github.com/netology-code/kuber-homeworks/raw/main/3.5/files/task.yaml
+Распознаётся github.com (github.com)… 140.82.121.3
+Подключение к github.com (github.com)|140.82.121.3|:443... соединение установлено.
+HTTP-запрос отправлен. Ожидание ответа… 302 Found
+Адрес: https://raw.githubusercontent.com/netology-code/kuber-homeworks/main/3.5/files/task.yaml [переход]
+--2023-04-07 00:38:48--  https://raw.githubusercontent.com/netology-code/kuber-homeworks/main/3.5/files/task.yaml
+Распознаётся raw.githubusercontent.com (raw.githubusercontent.com)… 185.199.108.133, 185.199.109.133, 185.199.110.133, ...
+Подключение к raw.githubusercontent.com (raw.githubusercontent.com)|185.199.108.133|:443... соединение установлено.
+HTTP-запрос отправлен. Ожидание ответа… 200 OK
+Длина: 937 [text/plain]
+Сохранение в: ‘task.yaml’
+
+task.yaml                                   100%[===========================================================================================>]     937  --.-KB/s    за 0s      
+
+2023-04-07 00:38:48 (13,0 MB/s) - ‘task.yaml’ сохранён [937/937]
+
 ```
 
-Namespaces создаются отдельно, поскольку исходный манифест не содержит их определения. Ожидается ошибка разрешения `auth-db`, при этом `auth-db.data` должен разрешаться в ClusterIP сервиса. Это ожидаемые результаты, а не фактический вывод.
+| Ресурс | Namespace | Назначение |
+|---|---|---|
+| Deployment `web-consumer` | `web` | Две реплики `radial/busyboxplus:curl`, выполняющие `curl auth-db` |
+| Deployment `auth-db` | `data` | Одна реплика nginx, порт `80/TCP` |
+| Service `auth-db` | `data` | Тип `ClusterIP`, selector `app: auth-db`, порт `80/TCP` |
 
-## Исправление
+### 2. Причина ошибки
 
-В [task-fixed.yaml](files/task-fixed.yaml) изменена только команда consumer:
+`web-consumer` находится в namespace `web`, а Service `auth-db` — в `data`. Короткое имя `auth-db` ищется в пространстве имён вызывающего pod. Поэтому consumer не находит нужный сервис.
 
-```diff
--        - while true; do curl auth-db; sleep 5; done
-+        - while true; do curl auth-db.data; sleep 5; done
-```
+Исправить это можно двумя способами:
+
+- Сохранить разные namespaces и обращаться к `auth-db.data` (при стандартном домене полное имя — `auth-db.data.svc.cluster.local`).
+- Разместить consumer и сервис в одном namespace.
+
+В этом решении выбран второй вариант: `web-consumer` переносится в `data`. Команда `curl auth-db` при этом остаётся прежней.
+
+[Документация Kubernetes: DNS для сервисов и pod](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/).
+
+### 3. Исправление манифеста
+
+Поэтому исправим namespace в Deployment web-consumer на data   
 
 ```bash
-kubectl --context="$LAB_CONTEXT" apply -f files/task-fixed.yaml
-kubectl --context="$LAB_CONTEXT" -n web rollout status deployment/web-consumer --timeout=180s
+$ sed 's/namespace: web/namespace: data/' task.yaml > new_task.yaml
+$ diff task.yaml new_task.yaml 
+5c5
+<   namespace: web
+---
+>   namespace: data
+
 ```
 
-## Подтверждение результата
+### 4. Развёртывание
+
+Создадим namespace `data` и применим два Deployment и Service из [new_task.yaml](files/new_task.yaml):    
 
 ```bash
-kubectl --context="$LAB_CONTEXT" -n web get pods -l app=web-consumer
-for pod in $(kubectl --context="$LAB_CONTEXT" -n web get pods -l app=web-consumer -o name); do
-  echo "$pod"
-  kubectl --context="$LAB_CONTEXT" -n web exec "$pod" -- sh -c \
-    'code=$(curl -sS --connect-timeout 5 --max-time 10 -o /dev/null -w "%{http_code}" http://auth-db.data); rc=$?; printf "HTTP %s\n" "$code"; [ "$rc" -eq 0 ] && [ "$code" = 200 ]' || exit 1
-done
-kubectl --context="$LAB_CONTEXT" -n web logs -l app=web-consumer --prefix --tail=25
+$ kubectl create ns data
+namespace/data created
+$ kubectl get ns
+NAME              STATUS   AGE
+data              Active   9s
+default           Active   4h13m
+kube-node-lease   Active   4h13m
+kube-public       Active   4h13m
+kube-system       Active   4h13m
+$ kubectl apply -f new_task.yaml 
+deployment.apps/web-consumer created
+deployment.apps/auth-db created
+service/auth-db created
+
 ```
 
-Критерий успеха: две готовые реплики, HTTP 200 из каждой и HTML nginx в логах после rollout. Статус Running сам по себе не доказывает доступность: бесконечный цикл продолжает работать даже при ошибках curl.
+### 5. Проверка результата
 
-Фактические результаты и скриншоты будут добавлены после прогона в учебном кластере. Изображения учебного вывода не генерировались.
+Проверим pod, Service и endpoints:
+
+```bash
+$ kubectl -n data get pods
+NAME                            READY   STATUS    RESTARTS   AGE
+auth-db-795c96cddc-2hfv7        1/1     Running   0          6m53s
+web-consumer-577d47b97d-lbm9r   1/1     Running   0          6m53s
+web-consumer-577d47b97d-sgtwm   1/1     Running   0          6m53s
+$ kubectl -n data get svc
+NAME      TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+auth-db   ClusterIP   10.233.26.139   <none>        80/TCP    6m58s
+$ kubectl -n data get endpoints
+NAME      ENDPOINTS         AGE
+auth-db   10.233.71.13:80   7m7s
+
+```
+
+Посмотрим логи consumer. В предоставленном выводе видна HTML-страница nginx:  
+
+```bash
+$ kubectl -n data logs --tail=15 pods/web-consumer-577d47b97d-lbm9r
+</style>
+</head>
+<body>
+<h1>Welcome to nginx!</h1>
+<p>If you see this page, the nginx web server is successfully installed and
+working. Further configuration is required.</p>
+
+<p>For online documentation and support please refer to
+<a href="http://nginx.org/">nginx.org</a>.<br/>
+Commercial support is available at
+<a href="http://nginx.com/">nginx.com</a>.</p>
+
+<p><em>Thank you for using nginx.</em></p>
+</body>
+</html>
+
+```
+
+**Результат по предоставленному выводу:** consumer получает страницу `Welcome to nginx!`. После переноса в `data` короткое имя `auth-db` указывает на нужный Service.
 
 ## Манифесты
 
-- [Namespaces](files/namespaces.yaml).
-- [Исправленное приложение](files/task-fixed.yaml).
-- [Оригинал задания](https://github.com/netology-code/kuber-homeworks/blob/main/3.5/files/task.yaml).
+- [Исходный манифест](files/task.yaml).
+- [Исправленный манифест: общий namespace data](files/new_task.yaml).
 
-Образы сохранены из задания. Возможные проблемы загрузки старых образов и совместимость с архитектурой узлов предстоит проверить при запуске.
+Скриншоты в присланном материале отсутствуют; приведён текстовый вывод команд.
