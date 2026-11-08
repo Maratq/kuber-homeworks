@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netology-deployment-back
+  labels:
+    app: netology-back
+spec:
+  replicas: 5
+  revisionHistoryLimit: 10
+  strategy:
+    rollingUpdate:
+      maxSurge: 100%
+      maxUnavailable: 50%
+  selector:
+    matchLabels:
+      app: netology-back
+  template:
+    metadata:
+      labels:
+        app: netology-back
+    spec:
+      containers:
+      - name: multitool
+        image: wbitt/network-multitool
+        env:
+          - name: HTTP_PORT
+            value: "8080"
+        ports:
+        - containerPort: 8080      
+      - name: nginx119
+        image: nginx:1.19
+        ports:
+        - containerPort: 80
